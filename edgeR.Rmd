@@ -1,0 +1,294 @@
+Practice with edgeR
+========================================================
+
+```{r} 
+rm(list=ls())
+source("http://bioconductor.org/biocLite.R")
+source("http://stevenbsmith.net/source/load_R_enviornment_vars.R")
+#biocLite("edgeR")
+library("edgeR")
+#edgeRUsersGuide()
+setwd(paste("/Users/",user,"/bin/Qualifiers/edgeR",sep=""))
+datafile =system.file( "extdata/pasilla_gene_counts.tsv", package="pasilla" )
+pasillaCountTable =read.table( datafile, header=TRUE, row.names="gene_id" )
+head(pasillaCountTable)
+
+pasillaDesign = data.frame(
+  row.names = colnames( pasillaCountTable ),
+  condition = c( "untreated", "untreated", "untreated",
+                 "untreated", "treated", "treated", "treated" ),
+  libType = c( "single-end", "single-end", "paired-end",
+               "paired-end", "single-end", "paired-end", "paired-end" ) )
+pasillaDesign
+
+pairedSamples = pasillaDesign$libType == "paired-end"
+countTable = pasillaCountTable[ , pairedSamples ]
+condition = pasillaDesign$condition[ pairedSamples ]
+
+head(countTable)
+
+group<-factor(c(1,1,2,2))
+```
+The following is the bare minimum needed to compare between two groups. Each function will be dissected in turn. Also, will need to compare the results to DESeq at some point.
+
+```{r}
+
+
+y <- DGEList(counts=countTable,group=group)
+y <- calcNormFactors(y)
+y <- estimateCommonDisp(y)
+y <- estimateTagwiseDisp(y)
+et <- exactTest(y)
+topTags(et)
+```
+
+#### Calc norm factors:
+
+Let's look under the hood of calcNormFactors:
+
+```{r}
+calcNormFactors
+object<-DGEList(counts=countTable,group=group)
+#Defaults:
+method = c("TMM", "RLE", "upperquartile", "none")
+refColumn = NULL
+logratioTrim = 0.3
+sumTrim = 0.05
+doWeighting = TRUE
+Acutoff = -1e+10
+p = 0.75
+```
+The first few lines process/clean and QC the input variables. 
+Checks to make sure that the data is  DGEList object, then converts the counts into matrix form. Stores library size, as calculated during he DEGList conversion. The lib size appears to be just the colSums of counts. Check this:
+colSums: `r colSums(countTable)`
+lib.size: `r object$samples$lib.size`
+Also note that if the lib size wasnt calculated using the DGEList method, it does it here
+```{r}
+if (is(object, "DGEList")) {
+        x <- as.matrix(object$counts)
+        lib.size <- object$samples$lib.size
+    }else {
+        x <- as.matrix(object)
+        lib.size <- colSums(x)
+    }
+```
+The first line of the following code gets executed implicity during a function call, but had to be modified for the purposes here. The second rgument, choices=method, is not in the function but this is what happens implicilt within the function call. The match.arg simply matches a given method to a list of potential choices. In this case, it takes the first element of method (4 elemtns) matches to the first (TMM) and assigns the signle element TMM as the method variable. The choices=method statement is the default vals of method in the function declaration. Confusing.  
+
+The next lines:
+* calcualte the rows (genes) that have zero counts across all samples and keep only the ones with at least one non zero gene count
+* then, if there are no genes left or only one sample, set normalization method to none
+* execute normaliztion method depending on the value of method variable (switch statement). Store the resulting normlizaton as f. Dig into the TMM and other normalization methods later. 
+* finally, dependning on wether the inital input was a DEGobject, return the normalizaion factors either as a vector or within the original object as object$samples$norm.factors (return the whole updated object to the original calcNormFactors call)
+
+The actual calls to each method seem to be hidden or private. will need to look into how to access them.. i.e., .calcFactorQuantile
+```{r}
+    method <- match.arg(method,choices=method)
+    allzero <- rowSums(x > 0) == 0
+    if (any(allzero)) x <- x[!allzero, , drop = FALSE]
+    if (nrow(x) == 0 || ncol(x) == 1) method = "none"
+#Depending on method...
+    f <- switch(method, 
+      TMM = {
+        f75 <- .calcFactorQuantile(data = x, lib.size = lib.size,p = 0.75)
+        if (is.null(refColumn)) refColumn <- which.min(abs(f75 -mean(f75)))
+        if (length(refColumn) == 0 | refColumn < 1 | refColumn > ncol(x)) refColumn <- 1
+        f <- rep(NA, ncol(x))
+        for (i in 1:ncol(x)) f[i] <- .calcFactorWeighted(obs = x[, 
+            i], ref = x[, refColumn], libsize.obs = lib.size[i], 
+            libsize.ref = lib.size[refColumn], logratioTrim = logratioTrim, 
+            sumTrim = sumTrim, doWeighting = doWeighting, Acutoff = Acutoff)
+        f
+    }, 
+      RLE = .calcFactorRLE(x)/lib.size, 
+      upperquartile = .calcFactorQuantile(x,lib.size, p = p), 
+      none = rep(1, ncol(x))
+    ) ## end of switch statment
+f <- f/exp(mean(log(f))) #what is this?
+
+## Depending on object type, return within the object or sumply as a vector. 
+    if (is(object, "DGEList")) {
+        object$samples$norm.factors <- f
+        return(object)
+    }else {
+        return(f)
+    }
+```
+
+#### Calc norm factors:
+
+#### estimateCommonDisp:
+#### estimateTagwiseDisp:
+#### exactTest:
+```{r}
+pair = 1:2
+dispersion = "auto"
+rejection.region = "doubletail"
+big.count = 900
+prior.count = 0.125
+```
+```{r}
+    if (!is(object, "DGEList")) 
+        stop("Currently only supports DGEList objects as the object argument.")
+    if (length(pair) != 2) 
+        stop("Pair must be of length 2.")
+    rejection.region <- match.arg(rejection.region, c("doubletail", 
+        "deviance", "smallp"))
+    group <- as.factor(object$samples$group)
+    levs.group <- levels(group)
+    if (is.numeric(pair)) pair <- levs.group[pair] else pair <- as.character(pair)
+    if (!all(pair %in% levs.group)) stop("At least one element of given pair is not a group.\n Groups are: ",paste(levs.group, collapse = " "))
+    if (is.null(dispersion)) 
+        dispersion <- "auto"
+    if (is.character(dispersion)) {
+        dispersion <- match.arg(dispersion, c("auto", "common","trended", "tagwise"))
+        dispersion <- switch(dispersion, common = object$common.dispersion, 
+            trended = object$trended.dispersion, tagwise = object$tagwise.dispersion, 
+            auto = getDispersion(object))
+        if (is.null(dispersion)) 
+            stop("specified dispersion not found in object")
+        if (is.na(dispersion[1])) 
+            stop("dispersion is NA")
+    }
+    ldisp <- length(dispersion)
+    ntags <- nrow(object$counts)
+    if (ldisp != 1 && ldisp != ntags) 
+        stop("Dispersion provided by user must have length either 1 or the number of tags in the DGEList object.")
+    if (ldisp == 1) 
+        dispersion <- rep(dispersion, ntags)
+```
+Beggining of the real meat:
+* First determine the group to include in the calculation and keep that as y
+* Store the library size and normalization factors for that group as respecive vars.
+```{r}
+group <- as.character(group)
+    j <- group %in% pair
+    y <- object$counts[, j, drop = FALSE]
+    lib.size <- object$samples$lib.size[j]
+    norm.factors <- object$samples$norm.factors[j]
+    group <- group[j]
+    if (is.null(rownames(y))) 
+        rownames(y) <- paste("tag", 1:ntags, sep = ".")
+```
+* Adjust library size by normalization factors
+* Use this adjusted lib size as offset
+* Calculate prior count and offset aug... *look into what theyre doing here*.
+```{r}
+    lib.size <- lib.size * norm.factors
+    offset <- log(lib.size)
+    lib.size.average <- exp(mean(offset))
+    prior.count <- prior.count * lib.size/mean(lib.size)
+    offset.aug <- log(lib.size + 2 * prior.count)
+    j1 <- group == pair[1]
+    n1 <- sum(j1)
+    if (n1 == 0) 
+        stop("No libraries for", pair[1])
+```
+* Calculate abundance? (by some mysterious other function mglmOneGroup, see below)
+```{r}
+    y1 <- y[, j1, drop = FALSE]
+    abundance1 <- mglmOneGroup(y1 + matrix(prior.count[j1], ntags, 
+        n1, byrow = TRUE), offset = offset.aug[j1], dispersion = dispersion)
+    j2 <- group == pair[2]
+    n2 <- sum(j2)
+    if (n1 == 0) 
+        stop("No libraries for", pair[2])
+    y2 <- y[, j2, drop = FALSE]
+    abundance2 <- mglmOneGroup(y2 + matrix(prior.count[j2], ntags, 
+        n2, byrow = TRUE), offset = offset.aug[j2], dispersion = dispersion)
+    logFC <- (abundance2 - abundance1)/log(2)
+    abundance <- mglmOneGroup(y, dispersion = dispersion, offset = offset)
+    e <- exp(abundance)
+    input.mean <- matrix(e, ntags, n1)
+    output.mean <- input.mean * lib.size.average
+    input.mean <- t(t(input.mean) * lib.size[j1])
+    y1 <- q2qnbinom(y1, input.mean = input.mean, output.mean = output.mean, 
+        dispersion = dispersion)
+    input.mean <- matrix(e, ntags, n2)
+    output.mean <- input.mean * lib.size.average
+    input.mean <- t(t(input.mean) * lib.size[j2])
+    y2 <- q2qnbinom(y2, input.mean = input.mean, output.mean = output.mean, 
+        dispersion = dispersion)
+```
+P values calcualted using one of several methods. Default is doubletail (inside switch statement) via the exactTestDoubleTail function. Need to look into this. 
+```{r}
+    exact.pvals <- switch(rejection.region, doubletail = exactTestDoubleTail(y1, 
+        y2, dispersion = dispersion, big.count = big.count), 
+        deviance = exactTestByDeviance(y1, y2, dispersion = dispersion), 
+        smallp = exactTestBySmallP(y1, y2, dispersion = dispersion))
+    AveLogCPM <- object$AveLogCPM
+    if (is.null(AveLogCPM)) 
+        AveLogCPM <- aveLogCPM(object)
+    de.out <- data.frame(logFC = logFC, logCPM = AveLogCPM, PValue = exact.pvals)
+    rn <- rownames(object$counts)
+    if (!is.null(rn)) 
+        rownames(de.out) <- make.unique(rn)
+    new("DGEExact", list(table = de.out, comparison = pair, genes = object$genes))
+}
+```
+The exactTestDoubleTail:
+```{r}
+#given y1 and y2,
+dispersion = 0
+big.count = 900 
+
+    ntags <- NROW(y1)
+    n1 <- NCOL(y1)
+    n2 <- NCOL(y2)
+    if (n1 > 1) 
+        s1 <- round(rowSums(y1))
+    else s1 <- round(y1)
+    if (n2 > 1) 
+        s2 <- round(rowSums(y2))
+    else s2 <- round(y2)
+    if (length(dispersion) == 1) 
+        dispersion <- rep(dispersion, ntags)
+    s <- s1 + s2
+    mu <- s/(n1 + n2)
+    mu1 <- n1 * mu
+    mu2 <- n2 * mu
+    pvals <- rep(1, ntags)
+    names(pvals) <- names(y1)
+    pois <- dispersion <= 0
+    if (any(pois)) 
+        pvals[pois] <- binomTest(s1[pois], s2[pois], p = n1/(n1 + 
+            n2))
+    big <- s1 > big.count & s2 > big.count
+    if (any(big)) {
+        y1 <- as.matrix(y1)
+        y2 <- as.matrix(y2)
+        pvals[big] <- exactTestBetaApprox(y1[big, , drop = FALSE], 
+            y2[big, , drop = FALSE], dispersion[big])
+    }
+    p.bot <- size1 <- size2 <- rep(0, ntags)
+    left <- s1 < mu1 & !pois & !big
+    if (any(left)) {
+        p.bot[left] <- dnbinom(s[left], size = (n1 + n2)/dispersion[left], 
+            mu = s[left])
+        size1[left] <- n1/dispersion[left]
+        size2[left] <- n2/dispersion[left]
+        for (g in which(left)) {
+            x <- 0:s1[g]
+            p.top <- dnbinom(x, size = size1[g], mu = mu1[g]) * 
+                dnbinom(s[g] - x, size = size2[g], mu = mu2[g])
+            pvals[g] <- 2 * sum(p.top)
+        }
+        pvals[left] <- pvals[left]/p.bot[left]
+    }
+    right <- s1 > mu1 & !pois & !big
+    if (any(right)) {
+        p.bot[right] <- dnbinom(s[right], size = (n1 + n2)/dispersion[right], 
+            mu = s[right])
+        size1[right] <- n1/dispersion[right]
+        size2[right] <- n2/dispersion[right]
+        for (g in which(right)) {
+            x <- s1[g]:s[g]
+            p.top <- dnbinom(x, size = size1[g], mu = mu1[g]) * 
+                dnbinom(s[g] - x, size = size2[g], mu = mu2[g])
+            pvals[g] <- 2 * sum(p.top)
+        }
+        pvals[right] <- pvals[right]/p.bot[right]
+    }
+    pmin(pvals, 1)
+}
+```
+#### topTags:
