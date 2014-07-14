@@ -164,7 +164,7 @@ group <- as.character(group)
     j <- group %in% pair
     y <- object$counts[, j, drop = FALSE]
     lib.size <- object$samples$lib.size[j]
-    norm.factors <- object$samples$norm.factors[j]
+    norm.factors <- object$samplesamples$norm.factors[j]
     group <- group[j]
     if (is.null(rownames(y))) 
         rownames(y) <- paste("tag", 1:ntags, sep = ".")
