@@ -118,6 +118,52 @@ f <- f/exp(mean(log(f))) #what is this?
 
 #### estimateCommonDisp:
 estimateCommonDisp
+
+```{r}
+object = y
+tol = 1e-06
+rowsum.filter = 5
+verbose = FALSE
+
+    group <- object$samples$group <- as.factor(object$samples$group) ## group= 1,1,2,2 ... as factors
+    if (all(tabulate(group) <= 1)) { ## ensures there are at least 2 samples in at least 1 group (tabulate counts the number of times each intenger occurs. Note that one group is allowed to have only 1 replicate, but not all). Exits entire dispersion estimation scwipt and assigns common dispersion as NA. 
+        warning("There is no replication, setting dispersion to NA.")
+        object$common.dispersion <- NA
+        return(object)
+    }
+
+    tags.used <- rowSums(object$counts) > rowsum.filter ## Ensures that there are at least 5 observed counts amonst all samples
+    pseudo.obj <- object[tags.used, ] ## Only uses counts passing filter. Note that this may help to curb biases due to zero inflation
+    disp <- 0.01
+    for (i in 1:2) { ## do the following twice, although i dont see where i gets used in the looop. 
+        out <- equalizeLibSizes(object, dispersion = disp) ## black box. generates comprarable sample counts using all counts. USE DISPERSION ESTIMATE-> this changes depending on the iteration of for loop. 
+        pseudo.obj$counts <- out$pseudo.counts[tags.used, , drop = FALSE] ## filter on tags only
+        y <- splitIntoGroups(pseudo.obj) ## split into groupes depending on design structure
+        #### Inside the commonCondLogLikDerDelta function
+        commonCondLogLikDerDelta(y,delta) # note that y is the first argument of the function, and so optimize searches for the maximum over the interval 0.01 to .99 wrt to y
+        l0 <- 0
+    for (i in 1:length(y)) {
+      i<-1
+        l0 <- condLogLikDerDelta(y[[i]], delta, der = der) + 
+            l0
+    }
+    sum(l0)
+    #####
+        delta <- optimize(commonCondLogLikDerDelta, interval = c(1e-04,100/(100 + 1)), tol = tol, maximum = TRUE, y = y, der = 0) ## heavy lifting
+        delta <- delta$maximum
+        disp <- delta/(1 - delta) # changes depending on interation of for loop
+    }
+    if (verbose) 
+        cat("Disp =", round(disp, 5), ", BCV =", round(sqrt(disp), 
+            4), "\n")
+    object$common.dispersion <- disp
+    object$pseudo.counts <- out$pseudo.counts
+    object$AveLogCPM <- aveLogCPM(object)
+    object$pseudo.lib.size <- out$common.lib.size
+    object
+
+```
+
 ?optimize
 commonCondLogLikDerDelta
 condLogLikDerDelta
