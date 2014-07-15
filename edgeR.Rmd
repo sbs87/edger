@@ -117,6 +117,11 @@ f <- f/exp(mean(log(f))) #what is this?
 #### Calc norm factors:
 
 #### estimateCommonDisp:
+estimateCommonDisp
+?optimize
+commonCondLogLikDerDelta
+condLogLikDerDelta
+condLogLikDerSize
 #### estimateTagwiseDisp:
 #### exactTest:
 ```{r}
