@@ -139,17 +139,14 @@ verbose = FALSE
         out <- equalizeLibSizes(object, dispersion = disp) ## black box. generates comprarable sample counts using all counts. USE DISPERSION ESTIMATE-> this changes depending on the iteration of for loop. 
         pseudo.obj$counts <- out$pseudo.counts[tags.used, , drop = FALSE] ## filter on tags only
         y <- splitIntoGroups(pseudo.obj) ## split into groupes depending on design structure
-        #### Inside the commonCondLogLikDerDelta function
-        commonCondLogLikDerDelta(y,delta) # note that y is the first argument of the function, and so optimize searches for the maximum over the interval 0.01 to .99 wrt to y
-        l0 <- 0
-    for (i in 1:length(y)) {
-      i<-1
-        l0 <- condLogLikDerDelta(y[[i]], delta, der = der) + 
-            l0
-    }
-    sum(l0)
-    #####
-        delta <- optimize(commonCondLogLikDerDelta, interval = c(1e-04,100/(100 + 1)), tol = tol, maximum = TRUE, y = y, der = 0) ## heavy lifting
+        delta <- optimize(commonCondLogLikDerDelta, interval = c(1e-04,100/(100 + 1)), tol = tol, maximum = TRUE, y = y, der = 0) ## heavy lifting. Optimize is really a wrapper to a C/C++ function called C_do_fmin. The function is passed without argument list, and the code knows to pass args to the function, internalized known as f, to the list. This is def a balck box, but my guess it that it finds the max/min emperically by plugging in vals from 1E-4 to .99 by increaments of 1e-6. 
+        #THe returned val is a list. First val is either max or min, second is teh value of the function at the optimized value (undifferentiated). For example, 
+        dummy_f<-function(x){
+          return(3*x^2+x) ## min occurs at x=-1/6, where d/dt=0. Max is where ever end interval is. The value of the function evaluated at x=-1/6 which is -0.0833
+
+        }
+        optimize(dummy_f,interval=c(-2,2),maximum=F)
+        
         delta <- delta$maximum
         disp <- delta/(1 - delta) # changes depending on interation of for loop
     }
@@ -163,11 +160,62 @@ verbose = FALSE
     object
 
 ```
+#### Inside optimize
+```{r}
+f=commonCondLogLikDerDelta
+interval= c(1e-04,100/(100 + 1))
+#...
+y = y
+der=0
+#...
+maximum = TRUE
+tol =tol ##1e-06
+optimize
+val <- .External2(C_do_fmin, function(arg) -f(arg, ...), lower, upper, tol)
+list(maximum = val, objective = f(val, ...))
 
+```
+#### Inside the commonCondLogLikDerDelta(y,delta) function
+Realize that this is being called iteratvley by optimize (?) over an interval y=0.01..0.99. What I don't get is how y counts and y interval are seperated. To test this, optimize the commonCondLogLikDerDelta function over the interval WITHOUT definining y first. Also, the delta doesnt need to be defined byecause the optimize code doesnt pass these arguments on through. weird. 
+```{r}
+ # note that y is the first argument of the function, and so when called by optimize, searches for the maximum over the interval 0.01 to .99 wrt to y. 
+## THink of this function as 3*x^2+x, where there exists a max value over a set interval (the first derivative). This function is condidition on a particualr value of the input value y, but optimize is feeding it values over 0.01...0.99. 
+
+        l0 <- 0
+der=0
+    for (i in 1:length(y)) { ## for each group in the counts
+        l0 <- condLogLikDerDelta(y[[i]], delta, der = der) + l0 #sum each group's condLogLikDerDelta. Notice the value of delta was passed in from each iteration of the optimize script. The output is a per gene log liklihood (I think.. drill down into what condLogLikDerDelta does)
+    }
+    sum(l0) ## then sum these together to give an overall log like
+    #####
+```
+#### Inside the ?condLogLikDerDelta(y,delta) function
 ?optimize
 commonCondLogLikDerDelta
 condLogLikDerDelta
-condLogLikDerSize
+```{r} 
+r <- (1/delta) - 1
+switch(der + 1L, condLogLikDerSize(y, r, der = 0L), 
+      condLogLikDerSize(y,r, der = 1L) * (-delta^(-2)), 
+      condLogLikDerSize(y, r, der = 1L) * 2 * (delta^(-3)) + condLogLikDerSize(y, r,der = 2) * (delta^(-4))) ## Will evaluate to the first argument, condLogLikDerSize(y, r, der = 0L),  since der=0
+```
+#### Inside the condLogLikDerSize(y, r, der=1L) function
+```{r}
+der = 1L
+
+    if (is.vector(y)) { ## what is y here???
+        y <- matrix(y, nrow = 1)
+    }else {
+        y <- as.matrix(y)
+    }
+    n <- ncol(y) ## Number of ...
+    m <- rowMeans(y) ## mean values of each tag
+    switch(der + 1L, 
+           rowSums(lgamma(y + r)) + lgamma(n * r) - lgamma(n * (m + r)) - n * lgamma(r), 
+           rowSum(digamma(y + r)) + n * digamma(n * r) - n * digamma(n * (m + r)) - n * digamma(r),
+           rowSums(trigamma(y + r)) + n^2 * trigamma(n * r) - n^2 * trigamma(n * (m + r)) - n *trigamma(r))
+
+```
 #### estimateTagwiseDisp:
 #### exactTest:
 ```{r}
