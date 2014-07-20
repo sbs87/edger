@@ -41,7 +41,35 @@ y <- estimateTagwiseDisp(y)
 et <- exactTest(y)
 topTags(et)
 ```
+#### Let's plat around with some very fake data:
 
+### Generate a gene table that contains 3 samples in each of 2 groups, with 25 genes. 
+```{r}
+dummy.data<-matrix(nrow=25,ncol=6)
+dummy.data<-data.frame(dummy.data)
+names(dummy.data)<-c("sample1.1","sample1.2","sample1.3","sample2.1","sample2.2","sample2.3")
+for(i in 1:20){
+dummy.data[i,]<-rnbinom(6,size=1/0.01,mu=500)
+}
+
+for(i in 21:25){
+dummy.data[i,1:3]<-rnbinom(3,size=1/0.01,mu=50)
+dummy.data[i,4:6]<-rnbinom(3,size=1/0.01,mu=100)
+}
+dummy.group<-c(1,1,1,2,2,2)
+dummy.data.DE <- DGEList(counts=dummy.data,group=dummy.group)
+dummy.data.DE <- calcNormFactors(dummy.data.DE)
+dummy.data.DE <- estimateCommonDisp(dummy.data.DE)
+dummy.data.DE <- estimateTagwiseDisp(dummy.data.DE)
+dummy.data.exactTest <- exactTest(dummy.data.DE)
+write.table(dummy.data.DE$tagwise.dispersion,file="dummy_data/tagwise.dispersion.txt")
+write.table(dummy.data.DE$counts,file="dummy_data/counts.txt",sep="\t")
+write.table(dummy.data.exactTest$table,file="dummy_data/exactTest.txt",sep="\t")
+topTags(dummy.data.exactTest)
+write.ftable(exactTest,file="dummy_data/exactTest_function.txt")
+exactTestDoubleTail
+log(mean(882.41550,596.9550,817.00382)/mean(541.27680 ,811.4242,678.95234))
+```
 #### Calc norm factors:
 
 Let's look under the hood of calcNormFactors:
@@ -391,3 +419,6 @@ big.count = 900
 }
 ```
 #### topTags:
+
+
+
